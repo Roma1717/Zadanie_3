@@ -171,7 +171,7 @@ namespace SportStoreConsoleApp
 
         static void CreateOrder()
         {
-            if (!cart.Any()) { Console.WriteLine("Корзина пуста."); return; }
+            if (!cart.Any()) { Console.WriteLine("Корзина пуста."); return;}
 
             // Проверка наличия и резервирование
             foreach (var ci in cart)
