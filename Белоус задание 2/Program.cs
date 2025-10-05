@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
 using System.Globalization;
 using System.Linq;
 
@@ -41,6 +43,9 @@ namespace SportStoreConsoleApp
 
     class Program
     {
+        // 🔹 Подключение к SQL Server (замени имя сервера и базы)
+        static string connectionString = @"Server=(localdb)\MSSQLLocalDB;Database=Пользователи;Trusted_Connection=True;";
+
         static List<Product> products = new List<Product>();
         static List<CartItem> cart = new List<CartItem>();
         static List<Order> orders = new List<Order>();
@@ -50,8 +55,15 @@ namespace SportStoreConsoleApp
 
         static void Main()
         {
-            SeedProducts();
+            // 🔐 Авторизация
+            if (!AuthorizeUser())
+            {
+                Console.WriteLine("Авторизация не удалась. Программа завершена.");
+                return;
+            }
 
+            // 🏪 Основное меню магазина
+            SeedProducts();
             while (true)
             {
                 Console.WriteLine("\n=== Магазин спортивных товаров ===");
@@ -86,6 +98,123 @@ namespace SportStoreConsoleApp
                     default: Console.WriteLine("Неверный выбор."); break;
                 }
             }
+        }
+
+        // 🔹 Авторизация пользователя
+        static bool AuthorizeUser()
+        {
+            Console.WriteLine("=== Авторизация ===");
+            Console.WriteLine("1. Войти");
+            Console.WriteLine("2. Зарегистрироваться");
+            Console.Write("Выберите действие: ");
+            var choice = Console.ReadLine();
+
+            if (choice == "1") return Login();
+            else if (choice == "2") return Register();
+            else return false;
+        }
+
+        static bool Login()
+        {
+            Console.Write("Введите логин: ");
+            var login = Console.ReadLine();
+            Console.Write("Введите пароль: ");
+            var password = Console.ReadLine();
+
+            using (var conn = new SqlConnection(connectionString))
+            {
+                conn.Open();
+
+                string query = "SELECT КодПользователя, КодСекретногоВопроса, Ответ FROM Пользователь WHERE Логин = @login AND Пароль = @password";
+                using (var cmd = new SqlCommand(query, conn))
+                {
+                    cmd.Parameters.AddWithValue("@login", login);
+                    cmd.Parameters.AddWithValue("@password", password);
+
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        if (!reader.Read())
+                        {
+                            Console.WriteLine("Неверный логин или пароль.");
+                            return false;
+                        }
+
+                        int userId = (int)reader["КодПользователя"];
+                        int questionId = (int)reader["КодСекретногоВопроса"];
+                        string correctAnswer = reader["Ответ"].ToString() ?? "";
+
+                        reader.Close();
+
+                        // Получаем текст вопроса
+                        string qTextQuery = "SELECT ТекстВопроса FROM СекретныйВопрос WHERE КодСекретногоВопроса = @id";
+                        using (var qCmd = new SqlCommand(qTextQuery, conn))
+                        {
+                            qCmd.Parameters.AddWithValue("@id", questionId);
+                            var question = qCmd.ExecuteScalar()?.ToString();
+
+                            Console.WriteLine($"Секретный вопрос: {question}");
+                            Console.Write("Введите ответ: ");
+                            var answer = Console.ReadLine();
+
+                            if (answer?.Trim().Equals(correctAnswer.Trim(), StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                Console.WriteLine("Авторизация успешна!");
+                                return true;
+                            }
+                            else
+                            {
+                                Console.WriteLine("Неверный ответ на секретный вопрос.");
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        static bool Register()
+        {
+            Console.Write("Введите логин: ");
+            var login = Console.ReadLine();
+            Console.Write("Введите пароль: ");
+            var password = Console.ReadLine();
+            Console.Write("Введите email: ");
+            var email = Console.ReadLine();
+
+            using (var conn = new SqlConnection(connectionString))
+            {
+                conn.Open();
+
+                // Выводим список секретных вопросов
+                Console.WriteLine("Выберите секретный вопрос:");
+                var qCmd = new SqlCommand("SELECT КодСекретногоВопроса, ТекстВопроса FROM СекретныйВопрос", conn);
+                using (var reader = qCmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                        Console.WriteLine($"{reader["КодСекретногоВопроса"]}. {reader["ТекстВопроса"]}");
+                }
+
+                Console.Write("Введите номер вопроса: ");
+                int qId = int.Parse(Console.ReadLine() ?? "1");
+
+                Console.Write("Введите ответ: ");
+                var answer = Console.ReadLine();
+
+                string insert = "INSERT INTO Пользователь (Логин, Пароль, ЭлектроннаяПочта, КодСекретногоВопроса, Ответ) " +
+                                "VALUES (@login, @password, @email, @qId, @answer)";
+                using (var cmd = new SqlCommand(insert, conn))
+                {
+                    cmd.Parameters.AddWithValue("@login", login);
+                    cmd.Parameters.AddWithValue("@password", password);
+                    cmd.Parameters.AddWithValue("@email", email ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@qId", qId);
+                    cmd.Parameters.AddWithValue("@answer", answer);
+                    cmd.ExecuteNonQuery();
+                }
+
+                Console.WriteLine("Регистрация прошла успешно! Теперь войдите.");
+            }
+            return Login();
         }
 
         static void SeedProducts()
@@ -173,7 +302,6 @@ namespace SportStoreConsoleApp
         {
             if (!cart.Any()) { Console.WriteLine("Корзина пуста."); return;}
 
-            // Проверка наличия и резервирование
             foreach (var ci in cart)
             {
                 var p = products.FirstOrDefault(x => x.Id == ci.ProductId);
@@ -181,13 +309,12 @@ namespace SportStoreConsoleApp
                 if (ci.Quantity > p.Stock) { Console.WriteLine($"Недостаточно товара '{p.Name}' (доступно {p.Stock})."); return; }
             }
 
-            // Создаём заказ и уменьшаем остатки
             var orderItems = new List<OrderItem>();
             decimal total = 0m;
             foreach (var ci in cart)
             {
                 var p = products.First(x => x.Id == ci.ProductId);
-                p.Stock -= ci.Quantity; // уменьшаем прямо в объекте
+                p.Stock -= ci.Quantity; 
                 var oi = new OrderItem
                 {
                     ProductId = p.Id,
@@ -220,7 +347,6 @@ namespace SportStoreConsoleApp
             if (order == null) { Console.WriteLine("Заказ не найден."); return; }
             if (order.Status != OrderStatus.Pending) { Console.WriteLine("Оплатить можно только заказы в статусе Pending."); return; }
 
-            // Симуляция оплаты
             order.Status = OrderStatus.Paid;
             Console.WriteLine($"Заказ #{order.Id} оплачен.");
         }
@@ -286,7 +412,6 @@ namespace SportStoreConsoleApp
             Console.WriteLine($"Выручка: {revenue:0.00}");
         }
 
-        // --- helpers ---
         static int ReadInt(string prompt)
         {
             while (true)
