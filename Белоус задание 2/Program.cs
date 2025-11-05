@@ -9,6 +9,7 @@ namespace SportStoreConsoleApp
 {
     enum OrderStatus { Pending, Paid, Shipped, Delivered, Cancelled }
 
+    // product
     class Product
     {
         public int Id { get; set; }
